@@ -1,5 +1,5 @@
-from sqlalchemy import declarative_base
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, select, text, create_engine
 from sqlalchemy.orm import relationship
 
 Base = declarative_base()
@@ -9,6 +9,14 @@ class RecordsUCRA(Base):
     __table_args__ = {'schema': 'records'}
     UCRA = Column(String(20), primary_key=True)
     UCRA_description = Column(String(100), nullable=False)
+
+
+class RecordsModels(Base):
+    __tablename__ = 'models'
+    __table_args__ = {'schema': 'records'}
+    model_id = Column(String(20), primary_key=True)
+    model_name = Column(String(50), nullable=False)
+    model_description = Column(String(100), nullable=False)
 
 
 class RecordsChannels(Base):
@@ -74,6 +82,7 @@ class RecordsTasks(Base):
     __tablename__ = 'tasks'
     __table_args__ = {'schema': 'records'}
     task_id = Column(Integer, primary_key=True)
+    task_name = Column(String(100), nullable=False)
     task_description = Column(String(100), nullable=False)
     task_category_id = Column(Integer, ForeignKey('records.task_categories.task_category_id'))
 
@@ -91,8 +100,13 @@ class TrackingProjectsUCRA(Base):
     __table_args__ = {'schema': 'tracking'}
     project_id = Column(Integer, ForeignKey('tracking.projects.project_id'), primary_key=True)
     UCRA = Column(String(20), ForeignKey('tracking.UCRA.UCRA'), primary_key=True)
-    project = relationship("TrackingProjects", back_populates="ucras")
-    ucra = relationship("RecordsUCRA", back_populates="projects")
+
+
+class TrackingProjectsModels(Base):
+    __tablename__ = 'projects_models'
+    __table_args__ = {'schema': 'tracking'}
+    project_id = Column(Integer, ForeignKey('tracking.projects.project_id'), primary_key=True)
+    model_id = Column(String(20), ForeignKey('tracking.models.model_id'), primary_key=True)
 
 
 class TrackingProjectsChannels(Base):
@@ -135,6 +149,83 @@ class TrackingProjectsTasksNotes(Base):
     date = Column(DateTime, nullable=False)
 
 
+def CreateMasterView():
+
+    '''
+    Create master view; join all the project tables together and grab value names from the records tables
+    '''
+    select_statement = select(
+            TrackingProjects.project_id,
+            TrackingProjects.project_name,
+            TrackingProjects.project_description,
+            TrackingProjectsLOBs.LOB_name,
+            RecordsUCRA.UCRA,
+            RecordsModels.model_name,
+            RecordsChannels.channel_level_1,
+            RecordsChannels.channel_level_2,
+            RecordsChannels.channel_level_3,
+            RecordsCampaigns.campaign_name,
+            RecordsOffercodes.offer_code,
+            RecordsTasks.task_name,
+            RecordsTaskCategories.task_category_name,
+            RecordsTaskFlow.task_flow_name,
+            RecordsTaskStatus.task_status_name
+        ).select_from(
+            TrackingProjects.__table__.join(
+                TrackingProjectsLOBs.__table__,
+                TrackingProjectsLOBs.project_id == TrackingProjects.project_id
+            ).join(
+                TrackingProjectsUCRA.__table__,
+                TrackingProjectsUCRA.project_id == TrackingProjects.project_id
+            ).join(
+                TrackingProjectsModels.__table__,
+                TrackingProjectsModels.project_id == TrackingProjects.project_id
+            ).join(
+                TrackingProjectsChannels.__table__,
+                TrackingProjectsChannels.project_id == TrackingProjects.project_id
+            ).join(
+                TrackingProjectsCampaigns.__table__,
+                TrackingProjectsCampaigns.project_id == TrackingProjects.project_id
+            ).join(
+                TrackingProjectsOfferCodes.__table__,
+                TrackingProjectsOfferCodes.project_id == TrackingProjects.project_id
+            ).join(
+                TrackingProjectsTasks.__table__,
+                TrackingProjectsTasks.project_id == TrackingProjects.project_id
+            ).join(
+                RecordsUCRA.__table__,
+                RecordsUCRA.UCRA == TrackingProjectsUCRA.UCRA
+            ).join(
+                RecordsModels.__table__,
+                RecordsModels.model_id == TrackingProjectsModels.model_id
+            ).join(
+                RecordsChannels.__table__,
+                RecordsChannels.channel_id == TrackingProjectsChannels.channel_id
+            ).join(
+                RecordsCampaigns.__table__,
+                RecordsCampaigns.campaign_id == TrackingProjectsCampaigns.campaign_id
+            ).join(
+                RecordsOffercodes.__table__,
+                RecordsOffercodes.offer_code == TrackingProjectsOfferCodes.offer_code
+            ).join(
+                RecordsTasks.__table__,
+                RecordsTasks.task_id == TrackingProjectsTasks.task_id
+            ).join(
+                RecordsTaskCategories.__table__,
+                RecordsTaskCategories.task_category_id == RecordsTasks.task_category_id
+            ).join(
+                RecordsTaskFlow.__table__,
+                RecordsTaskFlow.task_flow_id == TrackingProjectsTasks.task_workflow_id
+            ).join(
+                RecordsTaskStatus.__table__,
+                RecordsTaskStatus.task_status_id == TrackingProjectsTasks.task_status_id
+            )
+        )
+
+    master_view = select_statement.alias('master_view')
+    return master_view
+
+
 class Logs(Base):
     __tablename__ = 'logs'
     __table_args__ = {'schema': 'logs'}
@@ -145,3 +236,16 @@ class Logs(Base):
     action = Column(String(50), nullable=False)
     date = Column(DateTime, nullable=False)
 
+
+if __name__ == '__main__':
+    engine = create_engine('sqlite:///ProjectManagement.db')
+    
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    master_view = CreateMasterView()
+    session.execute(CreateView(master_view))
+
+    session.commit()
+    session.close()
